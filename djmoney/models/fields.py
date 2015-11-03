@@ -1,7 +1,11 @@
 from __future__ import division
 from django.db import models
 from django.conf import settings
-from django.db.models.sql.expressions import SQLEvaluator
+try:
+    from django.db.models.expressions import Expression
+except ImportError:
+    # Django < 1.8
+    from django.db.models.sql.expressions import SQLEvaluator as Expression
 try:
     from django.utils.encoding import smart_unicode
 except ImportError:
@@ -9,12 +13,25 @@ except ImportError:
     from django.utils.encoding import smart_text as smart_unicode
 from django.utils import translation
 from django.db.models.signals import class_prepared
-from moneyed import Money, Currency, DEFAULT_CURRENCY
+from moneyed import Money, Currency
 from moneyed.localization import _FORMATTER, format_money
 from djmoney import forms
-from djmoney.forms.widgets import CURRENCY_CHOICES
 from djmoney.utils import get_currency_field_name
-from django.db.models.expressions import ExpressionNode
+try:
+    from django.db.models.expressions import BaseExpression
+except ImportError:
+    # Django < 1.8
+    from django.db.models.expressions import ExpressionNode as BaseExpression
+
+from djmoney.settings import DEFAULT_CURRENCY, CURRENCY_CHOICES
+
+# If django-money-rates is installed we can automatically
+# perform operations with different currencies
+try:
+    from djmoney_rates.utils import convert_money
+    AUTO_CONVERT_MONEY = True
+except ImportError:
+    AUTO_CONVERT_MONEY = False
 
 from decimal import Decimal, ROUND_DOWN
 import inspect
@@ -48,6 +65,15 @@ class MoneyPatched(Money):
     def __float__(self):
         return float(self.amount)
 
+    def _convert_to_local_currency(self, other):
+        """
+        Converts other Money instances to the local currency
+        """
+        if AUTO_CONVERT_MONEY:
+            return convert_money(other.amount, other.currency, self.currency)
+        else:
+            return other
+
     @classmethod
     def _patch_to_current_class(cls, money):
         """
@@ -64,12 +90,12 @@ class MoneyPatched(Money):
             super(MoneyPatched, self).__neg__())
 
     def __add__(self, other):
-
+        other = self._convert_to_local_currency(other)
         return MoneyPatched._patch_to_current_class(
             super(MoneyPatched, self).__add__(other))
 
     def __sub__(self, other):
-
+        other = self._convert_to_local_currency(other)
         return MoneyPatched._patch_to_current_class(
             super(MoneyPatched, self).__sub__(other))
 
@@ -77,6 +103,14 @@ class MoneyPatched(Money):
 
         return MoneyPatched._patch_to_current_class(
             super(MoneyPatched, self).__mul__(other))
+
+    def __eq__(self, other):
+        if hasattr(other, 'currency'):
+            if self.currency == other.currency:
+                return self.amount == other.amount
+            raise TypeError('Cannot add or subtract two Money ' +
+                            'instances with different currencies.')
+        return False
 
     def __truediv__(self, other):
 
@@ -92,7 +126,9 @@ class MoneyPatched(Money):
             super(MoneyPatched, self).__rmod__(other))
 
     def __get_current_locale(self):
-        locale = translation.to_locale(translation.get_language())
+        # get_language can return None starting on django 1.8
+        language = translation.get_language() or settings.LANGUAGE_CODE
+        locale = translation.to_locale(language)
 
         if _FORMATTER.get_formatting_definition(locale):
             return locale
@@ -149,7 +185,7 @@ class MoneyFieldProxy(object):
     def __get__(self, obj, type=None):
         if obj is None:
             raise AttributeError('Can only be accessed via an instance.')
-        if isinstance(obj.__dict__[self.field.name], ExpressionNode):
+        if isinstance(obj.__dict__[self.field.name], BaseExpression):
             return obj.__dict__[self.field.name]
         if not isinstance(obj.__dict__[self.field.name], Money):
             obj.__dict__[self.field.name] = self._money_from_obj(obj)
@@ -162,7 +198,7 @@ class MoneyFieldProxy(object):
             obj.__dict__[self.field.name] = value.amount
             setattr(obj, self.currency_field_name,
                     smart_unicode(value.currency))
-        elif isinstance(value, ExpressionNode):
+        elif isinstance(value, BaseExpression):
             if isinstance(value.children[1], Money):
                 value.children[1] = value.children[1].amount
             obj.__dict__[self.field.name] = value
@@ -253,7 +289,7 @@ class MoneyField(models.DecimalField):
                                          **kwargs)
 
     def to_python(self, value):
-        if isinstance(value, SQLEvaluator):
+        if isinstance(value, Expression):
             return value
         if isinstance(value, Money):
             value = value.amount
@@ -270,7 +306,7 @@ class MoneyField(models.DecimalField):
 
         # Don't run on abstract classes
         # Removed, see https://github.com/jakewins/django-money/issues/42
-        #if cls._meta.abstract:
+        # if cls._meta.abstract:
         #    return
 
         if not self.frozen_by_south:
@@ -290,11 +326,10 @@ class MoneyField(models.DecimalField):
         setattr(cls, self.name, MoneyFieldProxy(self))
 
     def get_db_prep_save(self, value, connection):
-        if isinstance(value, SQLEvaluator):
+        if isinstance(value, Expression):
             return value
         if isinstance(value, Money):
             value = value.amount
-            return value
         return super(MoneyField, self).get_db_prep_save(value, connection)
 
     def get_db_prep_lookup(self, lookup_type, value, connection,
@@ -332,7 +367,7 @@ class MoneyField(models.DecimalField):
         value = self._get_val_from_obj(obj)
         return self.get_prep_value(value)
 
-    ## South support
+    # # South support
     def south_field_triple(self):
         "Returns a suitable description of this field for South."
         # Note: This method gets automatically with schemamigration time.
@@ -346,14 +381,14 @@ class MoneyField(models.DecimalField):
         kwargs['default_currency'] = "'%s'" % self.default_currency
         return field_class, args, kwargs
 
-    ## Django 1.7 migration support
+    # # Django 1.7 migration support
     def deconstruct(self):
         name, path, args, kwargs = super(MoneyField, self).deconstruct()
 
-        if self.default:
+        if self.default is not None:
             kwargs['default'] = self.default.amount
         if self.default_currency != DEFAULT_CURRENCY:
-            kwargs['default_currency'] = self.default_currency
+            kwargs['default_currency'] = str(self.default_currency)
         if self.currency_choices != CURRENCY_CHOICES:
             kwargs['currency_choices'] = self.currency_choices
         return name, path, args, kwargs

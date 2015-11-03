@@ -3,15 +3,23 @@ Created on May 7, 2011
 
 @author: jake
 '''
+from decimal import Decimal
 from django.test import TestCase
-from django.db.models import F
+from django.db.models import F, Q
+try:
+    from unittest import skipIf
+except ImportError:
+    # For python2.6 compatibility
+    from unittest2 import skipIf
 from moneyed import Money
 from .testapp.models import (ModelWithVanillaMoneyField,
     ModelRelatedToModelWithMoney, ModelWithChoicesMoneyField, BaseModel, InheritedModel, InheritorModel,
     SimpleModel, NullMoneyFieldModel, ModelWithDefaultAsDecimal, ModelWithDefaultAsFloat, ModelWithDefaultAsInt,
     ModelWithDefaultAsString, ModelWithDefaultAsStringWithCurrency, ModelWithDefaultAsMoney, ModelWithTwoMoneyFields,
-    ProxyModel)
+    ProxyModel, ModelWithNonMoneyField)
+from djmoney.models.fields import MoneyPatched, AUTO_CONVERT_MONEY
 import moneyed
+from mock import patch
 
 
 class VanillaMoneyFieldTestCase(TestCase):
@@ -55,6 +63,17 @@ class VanillaMoneyFieldTestCase(TestCase):
         object = ModelWithDefaultAsMoney.objects.create()
         self.assertEquals(Money('0.01', 'RUB'), object.money)
 
+    def testRounding(self):
+        somemoney = Money("100.0623456781123219")
+
+        model = ModelWithVanillaMoneyField(money=somemoney)
+        model.save()
+
+        retrieved = ModelWithVanillaMoneyField.objects.get(pk=model.pk)
+
+        self.assertEquals(somemoney.currency, retrieved.money.currency)
+        self.assertEquals(Money("100.06"), retrieved.money)
+
     def testRelativeAddition(self):
         # test relative value adding
         somemoney = Money(100, 'USD')
@@ -75,8 +94,30 @@ class VanillaMoneyFieldTestCase(TestCase):
         ModelWithTwoMoneyFields.objects.create(amount1=Money(2, 'USD'), amount2=Money(0, 'USD'))
         ModelWithTwoMoneyFields.objects.create(amount1=Money(3, 'USD'), amount2=Money(0, 'USD'))
         ModelWithTwoMoneyFields.objects.create(amount1=Money(4, 'USD'), amount2=Money(0, 'GHS'))
+        ModelWithTwoMoneyFields.objects.create(amount1=Money(5, 'USD'), amount2=Money(5, 'USD'))
+
+        qs = ModelWithTwoMoneyFields.objects.filter(amount1=F('amount2'))
+        self.assertEquals(1, qs.count())
 
         qs = ModelWithTwoMoneyFields.objects.filter(amount1__gt=F('amount2'))
+        self.assertEquals(2, qs.count())
+
+        qs = ModelWithTwoMoneyFields.objects.filter(Q(amount1=Money(1, 'USD')) | Q(amount2=Money(0, 'USD')))
+        self.assertEquals(3, qs.count())
+
+        qs = ModelWithTwoMoneyFields.objects.filter(Q(amount1=Money(1, 'USD')) | Q(amount1=Money(4, 'USD')) | Q(amount2=Money(0, 'GHS')))
+        self.assertEquals(2, qs.count())
+
+        qs = ModelWithTwoMoneyFields.objects.filter(Q(amount1=Money(1, 'USD')) | Q(amount1=Money(5, 'USD')) | Q(amount2=Money(0, 'GHS')))
+        self.assertEquals(3, qs.count())
+
+        qs = ModelWithTwoMoneyFields.objects.filter(Q(amount1=Money(1, 'USD')) | Q(amount1=Money(4, 'USD'), amount2=Money(0, 'GHS')))
+        self.assertEquals(2, qs.count())
+
+        qs = ModelWithTwoMoneyFields.objects.filter(Q(amount1=Money(1, 'USD')) | Q(amount1__gt=Money(4, 'USD'), amount2=Money(0, 'GHS')))
+        self.assertEquals(1, qs.count())
+
+        qs = ModelWithTwoMoneyFields.objects.filter(Q(amount1=Money(1, 'USD')) | Q(amount1__gte=Money(4, 'USD'), amount2=Money(0, 'GHS')))
         self.assertEquals(2, qs.count())
 
     def testExactMatch(self):
@@ -171,6 +212,15 @@ class RelatedModelsTestCase(TestCase):
         ModelRelatedToModelWithMoney.objects.get(moneyModel__money__lt=Money("1000.0", moneyed.ZWN))
 
 
+class NonMoneyTestCase(TestCase):
+
+    def testAllowExpressionNodesWithoutMoney(self):
+        """ allow querying on expression nodes that are not Money """
+        ModelWithNonMoneyField(money=Money(100.0), desc="hundred").save()
+        instance = ModelWithNonMoneyField.objects.filter(desc=F("desc")).get()
+        self.assertEqual(instance.desc, "hundred")
+
+
 class InheritedModelTestCase(TestCase):
     """Test inheritence from a concrete model"""
 
@@ -214,6 +264,42 @@ class ManagerTest(TestCase):
 
 class ProxyModelTest(TestCase):
 
-    def test_manager(self):
+    def test_instances(self):
         ProxyModel.objects.create(money=Money("100.0", 'USD'))
         self.assertIsInstance(ProxyModel.objects.get(pk=1), ProxyModel)
+
+    def test_patching(self):
+        ProxyModel.objects.create(money=Money("100.0", 'USD'))
+        # This will fail if ProxyModel.objects doesn't have the patched manager:
+        self.assertEqual(ProxyModel.objects.filter(money__gt=Money("50.00", 'GBP')).count(),
+                         0)
+
+
+class DifferentCurrencyTestCase(TestCase):
+    """Test sum/sub operations between different currencies"""
+
+    @skipIf(AUTO_CONVERT_MONEY is False, "You need to install django-money-rates to run this test")
+    def test_sum(self):
+        with patch(
+            'djmoney.models.fields.convert_money',
+            side_effect=lambda amount, cur_from, cur_to: Money((amount * Decimal(0.88)), cur_to)
+        ):
+            result = MoneyPatched(10, 'EUR') + Money(1, 'USD')
+            self.assertEqual(round(result.amount, 2), 10.88)
+            self.assertEqual(result.currency, moneyed.EUR)
+
+    @skipIf(AUTO_CONVERT_MONEY is False, "You need to install django-money-rates to run this test")
+    def test_sub(self):
+        with patch(
+            'djmoney.models.fields.convert_money',
+            side_effect=lambda amount, cur_from, cur_to: Money((amount * Decimal(0.88)), cur_to)
+        ):
+            result = MoneyPatched(10, 'EUR') - Money(1, 'USD')
+            self.assertEqual(round(result.amount, 2), 9.23)
+            self.assertEqual(result.currency, moneyed.EUR)
+
+    def test_eq(self):
+        self.assertEqual(MoneyPatched(1, 'EUR'), Money(1, 'EUR'))
+        self.assertNotEqual(MoneyPatched(1, 'EUR'), Money(2, 'EUR'))
+        with self.assertRaises(TypeError):
+            MoneyPatched(10, 'EUR') == Money(10, 'USD')
