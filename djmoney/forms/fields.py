@@ -1,13 +1,17 @@
+# -*- coding: utf-8 -*-
 from __future__ import unicode_literals
+
 from warnings import warn
 
+from django import VERSION
 from django.core import validators
 from django.core.exceptions import ValidationError
-from django.forms import MultiValueField, DecimalField, ChoiceField
+from django.forms import ChoiceField, DecimalField, MultiValueField
+
 from moneyed.classes import Money
 
-from .widgets import MoneyWidget
 from ..settings import CURRENCY_CHOICES
+from .widgets import MoneyWidget
 
 
 __all__ = ('MoneyField',)
@@ -31,8 +35,15 @@ class MoneyField(MultiValueField):
             warn('currency_choices will be deprecated in favor of choices', PendingDeprecationWarning)
             choices = currency_choices
 
+        # get the default currency if one was specified
+        default_currency = kwargs.pop('default_currency', None)
+
         amount_field = DecimalField(max_value, min_value, max_digits, decimal_places, *args, **kwargs)
         currency_field = ChoiceField(choices=choices)
+
+        if VERSION < (1, 8) and hasattr(amount_field, '_has_changed') and hasattr(currency_field, '_has_changed'):
+            amount_field.has_changed = amount_field._has_changed
+            currency_field.has_changed = currency_field._has_changed
 
         # TODO: No idea what currency_widget is supposed to do since it doesn't
         # even receive currency choices as input. Somehow it's supposed to be
@@ -42,12 +53,16 @@ class MoneyField(MultiValueField):
         else:
             self.widget = MoneyWidget(
                 amount_widget=amount_field.widget,
-                currency_widget=currency_field.widget
+                currency_widget=currency_field.widget,
+                default_currency=default_currency
             )
-
         # The two fields that this widget comprises
         fields = (amount_field, currency_field)
         super(MoneyField, self).__init__(fields, *args, **kwargs)
+
+        # set the initial value to the default currency so that the
+        # default currency appears as the selected menu item
+        self.initial = [None, default_currency]
 
     def compress(self, data_list):
         if data_list:
@@ -57,7 +72,7 @@ class MoneyField(MultiValueField):
                 return Money(*data_list[:2])
         return None
 
-    def has_changed(self, initial, data):
+    def has_changed(self, initial, data):  # noqa
         if initial is None:
             initial = ['' for x in range(0, len(data))]
         else:
@@ -82,7 +97,7 @@ class MoneyField(MultiValueField):
             amount_initial = amount_field.to_python(amount_initial)
         except ValidationError:
             return True
-        if amount_field._has_changed(amount_initial, amount_data):
+        if amount_field.has_changed(amount_initial, amount_data):
             return True
 
         try:
@@ -96,9 +111,10 @@ class MoneyField(MultiValueField):
             return True
         # If the currency is valid, has changed and there is some
         # amount data, then the money value has changed.
-        if currency_field._has_changed(currency_initial, currency_data) and amount_data:
+        if currency_field.has_changed(currency_initial, currency_data) and amount_data:
             return True
 
         return False
 
-    _has_changed = has_changed
+    if VERSION < (1, 8):
+        _has_changed = has_changed

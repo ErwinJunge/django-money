@@ -1,4 +1,6 @@
-from django.forms import TextInput, Select, MultiWidget
+# -*- coding: utf-8 -*-
+from django.forms import MultiWidget, Select, TextInput
+
 from ..settings import CURRENCY_CHOICES
 
 
@@ -6,7 +8,10 @@ __all__ = ('MoneyWidget',)
 
 
 class MoneyWidget(MultiWidget):
-    def __init__(self, choices=CURRENCY_CHOICES, amount_widget=None, currency_widget=None, *args, **kwargs):
+
+    def __init__(self, choices=CURRENCY_CHOICES, amount_widget=None, currency_widget=None, default_currency=None,
+                 *args, **kwargs):
+        self.default_currency = default_currency
         if not amount_widget:
             amount_widget = TextInput
         if not currency_widget:
@@ -17,12 +22,12 @@ class MoneyWidget(MultiWidget):
     def decompress(self, value):
         if value is not None:
             return [value.amount, value.currency]
-        return [None, None]
+        return [None, self.default_currency]
 
     # Needed for Django 1.5.x, where Field doesn't have the '_has_changed' method.
     # But it mustn't run on Django 1.6, where it doesn't work and isn't needed.
 
-    if hasattr(TextInput, '_has_changed'):
+    if hasattr(TextInput, '_has_changed'):  # noqa
         # This is a reimplementation of the MoneyField.has_changed,
         # but for the widget.
         def _has_changed(self, initial, data):

@@ -1,12 +1,21 @@
 Django-money
-------------
+============
 
-|Travis| |PyPi|
-
-.. |Travis| image:: https://travis-ci.org/django-money/django-money.svg
+.. image:: https://travis-ci.org/django-money/django-money.svg?branch=master
    :target: https://travis-ci.org/django-money/django-money
-.. |PyPi| image:: https://badge.fury.io/py/django-money.svg
+   :alt: Build Status
+
+.. image:: http://codecov.io/github/django-money/django-money/coverage.svg?branch=master
+   :target: http://codecov.io/github/django-money/django-money?branch=master
+   :alt: Coverage Status
+
+.. image:: https://readthedocs.org/projects/django-money/badge/?version=stable
+   :target: http://django-money.readthedocs.io/en/stable/?badge=stable
+   :alt: Documentation Status
+
+.. image:: https://badge.fury.io/py/django-money.svg
    :target: https://pypi.python.org/pypi/django-money
+   :alt: PyPI
 
 A little Django app that uses ``py-moneyed`` to add support for Money
 fields in your models and forms.
@@ -16,10 +25,11 @@ http://code.google.com/p/python-money/
 
 This version adds tests, and comes with several critical bugfixes.
 
-Django versions supported: 1.4.x, 1.5.x, 1.6.x, 1.7.x, 1.8.x
+Django versions supported: 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10
 
-Python versions supported: 2.6.x, 2.7.x, pypy 2.1, 3.2.x\*, 3.3.x\*,
-3.4.x\* (\* These versions of Python require py-moneyed 0.5 or higher )
+Python versions supported: 2.6, 2.7, 3.2, 3.3, 3.4, 3.5
+
+PyPy versions supported: PyPy 2.6, PyPy3 2.4
 
 Via ``py-moneyed``, ``django-money`` gets:
 
@@ -45,6 +55,10 @@ And the source for ``py-moneyed`` from here:
 
     https://github.com/limist/py-moneyed
 
+Using `pip`:
+
+    pip install py-moneyed django-money
+
 Model usage
 -----------
 
@@ -56,8 +70,8 @@ Use as normal model fields
         from djmoney.models.fields import MoneyField
         from django.db import models
 
-        class BankAccount(models.Model):
 
+        class BankAccount(models.Model):
             balance = MoneyField(max_digits=10, decimal_places=2, default_currency='USD')
 
 Searching for models with money fields:
@@ -65,14 +79,28 @@ Searching for models with money fields:
 .. code:: python
 
         from moneyed import Money, USD, CHF
-        account = BankAccount(balance=Money(10, USD))
-        swissAccount = BankAccount(balance=Money(10, CHF))
 
-        account.save()
-        swissAccount.save()
+
+        account = BankAccount.objects.create(balance=Money(10, USD))
+        swissAccount = BankAccount.objects.create(balance=Money(10, CHF))
 
         BankAccount.objects.filter(balance__gt=Money(1, USD))
         # Returns the "account" object
+
+Special note on serialized arguments: if your model definition 
+requires serializing an instance of ``Money``, you can use ``MoneyPatched``
+instead.
+
+.. code:: python
+
+        from django.core.validators import MinValueValidator
+        from django.db import models
+        from djmoney.models.fields import MoneyField, MoneyPatched
+
+
+        class BankAccount(models.Model):
+            balance = MoneyField(max_digits=10, decimal_places=2, validators=[MinValueValidator(MoneyPatched(100, 'GBP'))])
+
 
 If you use South to handle model migration, things will "Just Work" out
 of the box. South is an optional dependency and things will work fine
@@ -93,6 +121,7 @@ this two lines on your ``settings.py`` file
         from moneyed.localization import _FORMATTER
         from decimal import ROUND_HALF_EVEN
 
+
         BOB = moneyed.add_currency(
             code='BOB',
             numeric='068',
@@ -112,7 +141,8 @@ this two lines on your ``settings.py`` file
             group_size=3, group_separator=".", decimal_point=",",
             positive_sign="",  trailing_positive_sign="",
             negative_sign="-", trailing_negative_sign="",
-            rounding_method=ROUND_HALF_EVEN)
+            rounding_method=ROUND_HALF_EVEN
+        )
 
 To restrict the currencies listed on the project set a ``CURRENCIES``
 variable with a list of Currency codes on ``settings.py``
@@ -137,10 +167,10 @@ attribute, you have to wrap your manager manually, like so:
 .. code:: python
 
         from djmoney.models.managers import money_manager
+
+
         class BankAccount(models.Model):
-
             balance = MoneyField(max_digits=10, decimal_places=2, default_currency='USD')
-
             accounts = money_manager(MyCustomManager())
 
 Also, the money\_manager wrapper only wraps the standard QuerySet
@@ -150,12 +180,13 @@ need to manually decorate those custom methods, like so:
 
 .. code:: python
 
-        from djmoney.models.managers import understand_money
+        from djmoney.models.managers import understands_money
+
 
         class MyCustomQuerySet(QuerySet):
 
-           @understand_money
-           def my_custom_method(*args,**kwargs):
+           @understands_money
+           def my_custom_method(*args, **kwargs):
                # Awesome stuff
 
 Format localization
@@ -174,7 +205,7 @@ library ``djmoney``:
 
 .. code:: python
 
-        INSTALLED_APPS += ( 'djmoney', )
+        INSTALLED_APPS += ('djmoney', )
 
 In the template, add:
 
@@ -235,28 +266,35 @@ Install the required packages:
 
 Recommended way to run the tests:
 
-::
+.. code:: bash
 
     tox
 
-or
-
-::
-
-    python setup.py test
-
 Testing the application in the current environment python:
 
--  the main tests
+.. code:: bash
 
-   ./runtests.py
-
-A handful of the tox environments are automatically tested on travis:
-see ``gen_travis.bash`` and ``.travis.yml``.
+    make test
 
 Working with Exchange Rates
 ---------------------------
 
 To work with exchange rates, check out this repo that builds off of
 django-money: https://github.com/evonove/django-money-rates
+
+django-money can be configured to automatically use this app for currency
+conversions by settings ``AUTO_CONVERT_MONEY = True`` in your Django
+settings. Note that currency conversion is a lossy process, so automatic
+conversion is usually a good strategy only for very simple use cases. For most
+use cases you will need to be clear about exactly when currency conversion
+occurs, and automatic conversion can hide bugs. Also, with automatic conversion
+you lose some properties like commutativity (``A + B == B + A``) due to
+conversions happening in different directions.
+
+Known Issues
+------------
+Updates to a model form will not save in Django 1.10.1.  They will save in 1.10.0 and is expected to be fixed in Django 1.10.2.
+::
+
+     https://github.com/django/django/pull/7217
 
