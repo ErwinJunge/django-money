@@ -316,7 +316,8 @@ class MoneyField(models.DecimalField):
             c_field = CurrencyField(
                 max_length=3, price_field=self,
                 default=self.default_currency, editable=False,
-                choices=self.currency_choices
+                choices=self.currency_choices,
+                db_column=self.db_column + 'currency' if self.db_column else None,
             )
             c_field.creation_counter = self.creation_counter
             cls.add_to_class(c_field_name, c_field)
