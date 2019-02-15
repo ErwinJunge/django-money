@@ -1,12 +1,16 @@
 Welcome to Django-money's documentation!
 ========================================
 
-Contents:
+.. include:: ../README.rst
+
+Contents
+========
 
 .. toctree::
    :maxdepth: 2
 
    changes
+   contributing
 
 
 Indices and tables
@@ -15,4 +19,3 @@ Indices and tables
 * :ref:`genindex`
 * :ref:`modindex`
 * :ref:`search`
-

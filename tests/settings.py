@@ -20,6 +20,11 @@ TEMPLATES = [
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
         'DIRS': [],
         'APP_DIRS': True,
+        'OPTIONS': {
+            'context_processors': [
+                'django.contrib.auth.context_processors.auth',
+            ],
+        },
     },
 ]
 
@@ -33,14 +38,13 @@ INSTALLED_APPS = [
     'django.contrib.sites',
 
     'djmoney',
-    'djmoney_rates',
+    'djmoney.contrib.exchange',
     'reversion',
 
     'tests.testapp'
 ]
 
 SITE_ID = 1
-ROOT_URLCONF = 'core.urls'
 
 SECRET_KEY = 'foobar'
 
@@ -55,3 +59,6 @@ _FORMATTER.add_formatting_definition(
     negative_sign='-', trailing_negative_sign='',
     rounding_method=ROUND_HALF_EVEN
 )
+
+OPEN_EXCHANGE_RATES_APP_ID = 'test'
+FIXER_ACCESS_KEY = 'test'

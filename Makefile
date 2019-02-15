@@ -37,3 +37,12 @@ coverage:
 
 install: clean
 	python setup.py install
+
+release: dist  ## Generate and upload release to PyPi
+	twine upload -s dist/*
+
+dist: clean  ## Generate source dist and wheels
+	python setup.py sdist
+	python setup.py bdist_wheel
+	ls -l dist
+

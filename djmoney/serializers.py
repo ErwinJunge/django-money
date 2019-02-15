@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import json
+import sys
 
 from django.core.serializers.base import DeserializationError
 from django.core.serializers.json import Serializer as JSONSerializer
@@ -9,9 +10,8 @@ from django.core.serializers.python import (
 )
 from django.utils import six
 
-from moneyed import Money
+from djmoney.money import Money
 
-from ._compat import get_fields
 from .models.fields import MoneyField
 from .utils import get_currency_field_name
 
@@ -40,7 +40,7 @@ def Deserializer(stream_or_string, **options):  # noqa
                     raise
             money_fields = {}
             fields = {}
-            field_names = get_fields(Model)
+            field_names = {field.name for field in Model._meta.get_fields()}
             for (field_name, field_value) in six.iteritems(obj['fields']):
                 if ignore and field_name not in field_names:
                     # skip fields no longer on model
@@ -56,5 +56,7 @@ def Deserializer(stream_or_string, **options):  # noqa
                 for field, value in money_fields.items():
                     setattr(inner_obj.object, field, value)
                 yield inner_obj
-    except GeneratorExit:
+    except (GeneratorExit, DeserializationError):
         raise
+    except Exception as exc:
+        six.reraise(DeserializationError, DeserializationError(exc), sys.exc_info()[2])
